@@ -1,7 +1,9 @@
 package run.halo.app.handler.file;
 
-import com.UpYun;
+import com.upyun.RestManager;
+import com.upyun.UpException;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.Response;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -16,7 +18,9 @@ import run.halo.app.service.OptionService;
 import run.halo.app.utils.FilenameUtils;
 import run.halo.app.utils.ImageUtils;
 
-import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -50,15 +54,15 @@ public class UpOssFileHandler implements FileHandler {
         String styleRule = optionService.getByPropertyOrDefault(UpOssProperties.OSS_STYLE_RULE, String.class, "");
         String thumbnailStyleRule = optionService.getByPropertyOrDefault(UpOssProperties.OSS_THUMBNAIL_STYLE_RULE, String.class, "");
 
-        // Create up yun
-        UpYun upYun = new UpYun(bucket, operator, password);
-        upYun.setDebug(log.isDebugEnabled());
-        upYun.setTimeout(60);
-        upYun.setApiDomain(UpYun.ED_AUTO);
+        RestManager manager = new RestManager(bucket, operator, password);
+        manager.setTimeout(60 * 10);
+        manager.setApiDomain(RestManager.ED_AUTO);
+
+        Map<String, String> params = new HashMap<>();
 
         try {
             // Get file basename
-            String basename = FilenameUtils.getBasename(file.getOriginalFilename());
+            String basename = FilenameUtils.getBasename(Objects.requireNonNull(file.getOriginalFilename()));
             // Get file extension
             String extension = FilenameUtils.getExtension(file.getOriginalFilename());
             // Get md5 value of the file
@@ -66,10 +70,10 @@ public class UpOssFileHandler implements FileHandler {
             // Build file path
             String upFilePath = StringUtils.appendIfMissing(source, "/") + md5OfFile + '.' + extension;
             // Set md5Content
-            upYun.setContentMD5(md5OfFile);
+            params.put(RestManager.PARAMS.CONTENT_MD5.getValue(), md5OfFile);
             // Write file
-            boolean uploadSuccess = upYun.writeFile(upFilePath, file.getInputStream(), true, null);
-            if (!uploadSuccess) {
+            Response result = manager.writeFile(upFilePath, file.getInputStream(), params);
+            if (!result.isSuccessful()) {
                 throw new FileOperationException("上传附件 " + file.getOriginalFilename() + " 到又拍云失败" + upFilePath);
             }
 
@@ -85,17 +89,14 @@ public class UpOssFileHandler implements FileHandler {
             uploadResult.setSize(file.getSize());
 
             // Handle thumbnail
-            if (FileHandler.isImageType(uploadResult.getMediaType())) {
-                BufferedImage image = ImageUtils.getImageFromFile(file.getInputStream(), extension);
-                uploadResult.setWidth(image.getWidth());
-                uploadResult.setHeight(image.getHeight());
+            handleImageMetadata(file, uploadResult, () -> {
                 if (ImageUtils.EXTENSION_ICO.equals(extension)) {
                     uploadResult.setThumbPath(filePath);
+                    return filePath;
                 } else {
-                    uploadResult.setThumbPath(StringUtils.isBlank(thumbnailStyleRule) ? filePath : filePath + thumbnailStyleRule);
+                    return StringUtils.isBlank(thumbnailStyleRule) ? filePath : filePath + thumbnailStyleRule;
                 }
-            }
-
+            });
             return uploadResult;
         } catch (Exception e) {
             throw new FileOperationException("上传附件 " + file.getOriginalFilename() + " 到又拍云失败", e);
@@ -111,24 +112,23 @@ public class UpOssFileHandler implements FileHandler {
         String bucket = optionService.getByPropertyOfNonNull(UpOssProperties.OSS_BUCKET).toString();
         String operator = optionService.getByPropertyOfNonNull(UpOssProperties.OSS_OPERATOR).toString();
 
-        // Create up yun
-        UpYun upYun = new UpYun(bucket, operator, password);
-        // Set api domain with ED_AUTO
-        upYun.setApiDomain(UpYun.ED_AUTO);
+        RestManager manager = new RestManager(bucket, operator, password);
+        manager.setTimeout(60 * 10);
+        manager.setApiDomain(RestManager.ED_AUTO);
 
         try {
-            // Delete the file
-            boolean deleteResult = upYun.deleteFile(key);
-            if (!deleteResult) {
-                log.warn("Failed to delete file " + key + " from UpYun");
+            Response result = manager.deleteFile(key, null);
+            if (!result.isSuccessful()) {
+                log.warn("附件 " + key + " 从又拍云删除失败");
             }
-        } catch (Exception e) {
+        } catch (IOException | UpException e) {
+            e.printStackTrace();
             throw new FileOperationException("附件 " + key + " 从又拍云删除失败", e);
         }
     }
 
     @Override
-    public boolean supportType(AttachmentType type) {
-        return AttachmentType.UPOSS.equals(type);
+    public AttachmentType getAttachmentType() {
+        return AttachmentType.UPOSS;
     }
 }

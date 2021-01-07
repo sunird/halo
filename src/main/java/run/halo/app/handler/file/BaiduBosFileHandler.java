@@ -19,7 +19,6 @@ import run.halo.app.service.OptionService;
 import run.halo.app.utils.FilenameUtils;
 import run.halo.app.utils.ImageUtils;
 
-import java.awt.image.BufferedImage;
 import java.util.Objects;
 
 /**
@@ -64,7 +63,7 @@ public class BaiduBosFileHandler implements FileHandler {
         domain = protocol + domain;
 
         try {
-            String basename = FilenameUtils.getBasename(file.getOriginalFilename());
+            String basename = FilenameUtils.getBasename(Objects.requireNonNull(file.getOriginalFilename()));
             String extension = FilenameUtils.getExtension(file.getOriginalFilename());
             String timestamp = String.valueOf(System.currentTimeMillis());
             String upFilePath = StringUtils.join(basename, "_", timestamp, ".", extension);
@@ -86,16 +85,13 @@ public class BaiduBosFileHandler implements FileHandler {
             uploadResult.setSize(file.getSize());
 
             // Handle thumbnail
-            if (FileHandler.isImageType(uploadResult.getMediaType())) {
-                BufferedImage image = ImageUtils.getImageFromFile(file.getInputStream(), extension);
-                uploadResult.setWidth(image.getWidth());
-                uploadResult.setHeight(image.getHeight());
+            handleImageMetadata(file, uploadResult, () -> {
                 if (ImageUtils.EXTENSION_ICO.equals(extension)) {
-                    uploadResult.setThumbPath(filePath);
+                    return filePath;
                 } else {
-                    uploadResult.setThumbPath(StringUtils.isBlank(thumbnailStyleRule) ? filePath : filePath + thumbnailStyleRule);
+                    return StringUtils.isBlank(thumbnailStyleRule) ? filePath : filePath + thumbnailStyleRule;
                 }
-            }
+            });
 
             return uploadResult;
         } catch (Exception e) {
@@ -132,7 +128,7 @@ public class BaiduBosFileHandler implements FileHandler {
     }
 
     @Override
-    public boolean supportType(AttachmentType type) {
-        return AttachmentType.BAIDUBOS.equals(type);
+    public AttachmentType getAttachmentType() {
+        return AttachmentType.BAIDUBOS;
     }
 }

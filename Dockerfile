@@ -1,15 +1,17 @@
-FROM adoptopenjdk/openjdk8-openj9
+FROM adoptopenjdk/openjdk11-openj9
 VOLUME /tmp
 
-ARG JAR_FILE=build/libs/halo.jar
-ARG PORT=8090
+ARG JAR_FILE=build/libs/*.jar
 ARG TIME_ZONE=Asia/Shanghai
 
-ENV TZ=${TIME_ZONE}
-ENV JAVA_OPTS="-Xms256m -Xmx256m"
+ENV JVM_XMS="256m" \
+    JVM_XMX="256m" \
+    JVM_OPTS="" \
+    TZ=${TIME_ZONE}
+
 
 COPY ${JAR_FILE} halo.jar
 
-EXPOSE ${PORT}
+EXPOSE 8090
 
-ENTRYPOINT java ${JAVA_OPTS} -Djava.security.egd=file:/dev/./urandom -server -jar halo.jar
+ENTRYPOINT java -Xms${JVM_XMS} -Xmx${JVM_XMX} ${JVM_OPTS} -Djava.security.egd=file:/dev/./urandom -server -jar halo.jar
