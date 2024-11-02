@@ -1,5 +1,14 @@
 package run.halo.app.service.impl;
 
+import static org.springframework.data.domain.Sort.Direction.ASC;
+import static org.springframework.data.domain.Sort.Direction.DESC;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.domain.Page;
@@ -7,6 +16,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.lang.NonNull;
+import org.springframework.lang.Nullable;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 import org.springframework.util.CollectionUtils;
@@ -14,54 +24,59 @@ import run.halo.app.exception.AlreadyExistsException;
 import run.halo.app.exception.BadRequestException;
 import run.halo.app.exception.NotFoundException;
 import run.halo.app.exception.ServiceException;
-import run.halo.app.model.dto.post.BasePostDetailDTO;
-import run.halo.app.model.dto.post.BasePostMinimalDTO;
 import run.halo.app.model.dto.post.BasePostSimpleDTO;
 import run.halo.app.model.entity.BasePost;
-import run.halo.app.model.enums.PostEditorType;
+import run.halo.app.model.entity.Content;
+import run.halo.app.model.entity.Content.PatchedContent;
 import run.halo.app.model.enums.PostStatus;
 import run.halo.app.model.properties.PostProperties;
 import run.halo.app.repository.base.BasePostRepository;
+import run.halo.app.service.ContentPatchLogService;
+import run.halo.app.service.ContentService;
 import run.halo.app.service.OptionService;
 import run.halo.app.service.base.AbstractCrudService;
 import run.halo.app.service.base.BasePostService;
 import run.halo.app.utils.DateUtils;
 import run.halo.app.utils.HaloUtils;
-import run.halo.app.utils.MarkdownUtils;
 import run.halo.app.utils.ServiceUtils;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
-
-import static org.springframework.data.domain.Sort.Direction.ASC;
-import static org.springframework.data.domain.Sort.Direction.DESC;
 
 /**
  * Base post service implementation.
  *
  * @author johnniang
  * @author ryanwang
+ * @author guqing
  * @date 2019-04-24
  */
 @Slf4j
-public abstract class BasePostServiceImpl<POST extends BasePost> extends AbstractCrudService<POST, Integer> implements BasePostService<POST> {
+public abstract class BasePostServiceImpl<POST extends BasePost>
+    extends AbstractCrudService<POST, Integer> implements BasePostService<POST> {
 
     private final BasePostRepository<POST> basePostRepository;
 
     private final OptionService optionService;
 
-    private final Pattern summaryPattern = Pattern.compile("\t|\r|\n");
+    private final ContentService contentService;
+
+    private final ContentPatchLogService contentPatchLogService;
+
+    private static final Pattern summaryPattern = Pattern.compile("\t|\r|\n");
+
+    private static final Pattern BLANK_PATTERN = Pattern.compile("\\s");
+
+    private static final String CHINESE_REGEX = "[^\\x00-\\xff]";
+
+    private static final String PUNCTUATION_REGEX = "[\\p{P}\\p{S}\\p{Z}\\s]+";
 
     public BasePostServiceImpl(BasePostRepository<POST> basePostRepository,
-            OptionService optionService) {
+        OptionService optionService,
+        ContentService contentService,
+        ContentPatchLogService contentPatchLogService) {
         super(basePostRepository);
         this.basePostRepository = basePostRepository;
         this.optionService = optionService;
+        this.contentService = contentService;
+        this.contentPatchLogService = contentPatchLogService;
     }
 
     @Override
@@ -85,7 +100,8 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
     public POST getBySlug(String slug) {
         Assert.hasText(slug, "Slug must not be blank");
 
-        return basePostRepository.getBySlug(slug).orElseThrow(() -> new NotFoundException("查询不到该文章的信息").setErrorData(slug));
+        return basePostRepository.getBySlug(slug)
+            .orElseThrow(() -> new NotFoundException("查询不到该文章的信息").setErrorData(slug));
     }
 
     @Override
@@ -95,7 +111,8 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
 
         Optional<POST> postOptional = basePostRepository.getBySlugAndStatus(slug, status);
 
-        return postOptional.orElseThrow(() -> new NotFoundException("查询不到该文章的信息").setErrorData(slug));
+        return postOptional
+            .orElseThrow(() -> new NotFoundException("查询不到该文章的信息").setErrorData(slug));
     }
 
     @Override
@@ -106,6 +123,11 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
         Optional<POST> postOptional = basePostRepository.getByIdAndStatus(id, status);
 
         return postOptional.orElseThrow(() -> new NotFoundException("查询不到该文章的信息").setErrorData(id));
+    }
+
+    @Override
+    public PatchedContent getLatestContentById(Integer id) {
+        return contentPatchLogService.getByPostId(id);
     }
 
     @Override
@@ -120,17 +142,24 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
     public List<POST> listPrevPosts(POST post, int size) {
         Assert.notNull(post, "Post must not be null");
 
-        String indexSort = optionService.getByPropertyOfNonNull(PostProperties.INDEX_SORT).toString();
+        String indexSort =
+            optionService.getByPropertyOfNonNull(PostProperties.INDEX_SORT).toString();
 
         PageRequest pageRequest = PageRequest.of(0, size, Sort.by(ASC, indexSort));
 
         switch (indexSort) {
             case "createTime":
-                return basePostRepository.findAllByStatusAndCreateTimeAfter(PostStatus.PUBLISHED, post.getCreateTime(), pageRequest).getContent();
+                return basePostRepository
+                    .findAllByStatusAndCreateTimeAfter(PostStatus.PUBLISHED, post.getCreateTime(),
+                        pageRequest).getContent();
             case "editTime":
-                return basePostRepository.findAllByStatusAndEditTimeAfter(PostStatus.PUBLISHED, post.getEditTime(), pageRequest).getContent();
+                return basePostRepository
+                    .findAllByStatusAndEditTimeAfter(PostStatus.PUBLISHED, post.getEditTime(),
+                        pageRequest).getContent();
             case "visits":
-                return basePostRepository.findAllByStatusAndVisitsAfter(PostStatus.PUBLISHED, post.getVisits(), pageRequest).getContent();
+                return basePostRepository
+                    .findAllByStatusAndVisitsAfter(PostStatus.PUBLISHED, post.getVisits(),
+                        pageRequest).getContent();
             default:
                 return Collections.emptyList();
         }
@@ -140,17 +169,24 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
     public List<POST> listNextPosts(POST post, int size) {
         Assert.notNull(post, "Post must not be null");
 
-        String indexSort = optionService.getByPropertyOfNonNull(PostProperties.INDEX_SORT).toString();
+        String indexSort =
+            optionService.getByPropertyOfNonNull(PostProperties.INDEX_SORT).toString();
 
         PageRequest pageRequest = PageRequest.of(0, size, Sort.by(DESC, indexSort));
 
         switch (indexSort) {
             case "createTime":
-                return basePostRepository.findAllByStatusAndCreateTimeBefore(PostStatus.PUBLISHED, post.getCreateTime(), pageRequest).getContent();
+                return basePostRepository
+                    .findAllByStatusAndCreateTimeBefore(PostStatus.PUBLISHED, post.getCreateTime(),
+                        pageRequest).getContent();
             case "editTime":
-                return basePostRepository.findAllByStatusAndEditTimeBefore(PostStatus.PUBLISHED, post.getEditTime(), pageRequest).getContent();
+                return basePostRepository
+                    .findAllByStatusAndEditTimeBefore(PostStatus.PUBLISHED, post.getEditTime(),
+                        pageRequest).getContent();
             case "visits":
-                return basePostRepository.findAllByStatusAndVisitsBefore(PostStatus.PUBLISHED, post.getVisits(), pageRequest).getContent();
+                return basePostRepository
+                    .findAllByStatusAndVisitsBefore(PostStatus.PUBLISHED, post.getVisits(),
+                        pageRequest).getContent();
             default:
                 return Collections.emptyList();
         }
@@ -190,7 +226,8 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
         Assert.isTrue(top > 0, "Top number must not be less than 0");
 
         PageRequest latestPageable = PageRequest.of(0, top, Sort.by(DESC, "createTime"));
-        return basePostRepository.findAllByStatus(PostStatus.PUBLISHED, latestPageable).getContent();
+        return basePostRepository.findAllByStatus(PostStatus.PUBLISHED, latestPageable)
+            .getContent();
     }
 
     @Override
@@ -225,12 +262,19 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
 
         if (!finishedIncrease) {
             log.error("Post with id: [{}] may not be found", postId);
-            throw new BadRequestException("Failed to increase visits " + visits + " for post with id " + postId);
+            throw new BadRequestException(
+                "Failed to increase visits " + visits + " for post with id " + postId);
         }
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
+    public void increaseVisit(Integer postId) {
+        increaseVisit(1L, postId);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public void increaseLike(long likes, Integer postId) {
         Assert.isTrue(likes > 0, "Likes to increase must not be less than 1");
         Assert.notNull(postId, "Post id must not be null");
@@ -239,162 +283,69 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
 
         if (affectedRows != 1) {
             log.error("Post with id: [{}] may not be found", postId);
-            throw new BadRequestException("Failed to increase likes " + likes + " for post with id " + postId);
+            throw new BadRequestException(
+                "Failed to increase likes " + likes + " for post with id " + postId);
         }
     }
 
     @Override
-    @Transactional
-    public void increaseVisit(Integer postId) {
-        increaseVisit(1L, postId);
-    }
-
-    @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void increaseLike(Integer postId) {
         increaseLike(1L, postId);
     }
 
+    /**
+     * @param post post for article
+     * @return post with handled data
+     */
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public POST createOrUpdateBy(POST post) {
         Assert.notNull(post, "Post must not be null");
-
-        String originalContent = post.getOriginalContent();
-        originalContent = HaloUtils.cleanHtmlTag(originalContent);
-
-        post.setWordCount((long) originalContent.length());
-
-        // Render content
-        if (post.getEditorType().equals(PostEditorType.MARKDOWN)) {
-            post.setFormatContent(MarkdownUtils.renderHtml(post.getOriginalContent()));
-        } else {
-            post.setFormatContent(post.getOriginalContent());
-        }
-
-        // if password is not empty,change status to intimate
-        if (StringUtils.isNotEmpty(post.getPassword()) && post.getStatus() != PostStatus.DRAFT) {
-            post.setStatus(PostStatus.INTIMATE);
-        }
-
+        PatchedContent postContent = post.getContent();
+        // word count stat
+        post.setWordCount(htmlFormatWordCount(postContent.getContent()));
+        POST savedPost;
         // Create or update post
         if (ServiceUtils.isEmptyId(post.getId())) {
             // The sheet will be created
-            return create(post);
+            savedPost = create(post);
+            contentService.createOrUpdateDraftBy(post.getId(),
+                postContent.getContent(), postContent.getOriginalContent());
+        } else {
+            // The sheet will be updated
+            contentService.createOrUpdateDraftBy(post.getId(),
+                postContent.getContent(), postContent.getOriginalContent());
+            // Update it
+            savedPost = update(post);
         }
 
-        // The sheet will be updated
-        // Set edit time
-        post.setEditTime(DateUtils.now());
-
-        // Update it
-        return update(post);
-    }
-
-    @Override
-    public POST filterIfEncrypt(POST post) {
-        Assert.notNull(post, "Post must not be null");
-
-        if (StringUtils.isNotBlank(post.getPassword())) {
-            String tip = "The post is encrypted by author";
-            post.setSummary(tip);
-            post.setOriginalContent(tip);
-            post.setFormatContent(tip);
+        if (PostStatus.PUBLISHED.equals(post.getStatus())
+            || PostStatus.INTIMATE.equals(post.getStatus())) {
+            contentService.publishContent(post.getId());
         }
-
-        return post;
+        return savedPost;
     }
 
     @Override
-    public BasePostMinimalDTO convertToMinimal(POST post) {
-        Assert.notNull(post, "Post must not be null");
-
-        return new BasePostMinimalDTO().convertFrom(post);
-    }
-
-    @Override
-    public List<BasePostMinimalDTO> convertToMinimal(List<POST> posts) {
-        if (CollectionUtils.isEmpty(posts)) {
-            return Collections.emptyList();
-        }
-
-        return posts.stream()
-                .map(this::convertToMinimal)
-                .collect(Collectors.toList());
-    }
-
-    @Override
-    public Page<BasePostMinimalDTO> convertToMinimal(Page<POST> postPage) {
-        Assert.notNull(postPage, "Post page must not be null");
-
-        return postPage.map(this::convertToMinimal);
-    }
-
-    @Override
-    public BasePostSimpleDTO convertToSimple(POST post) {
-        Assert.notNull(post, "Post must not be null");
-
-        BasePostSimpleDTO basePostSimpleDTO = new BasePostSimpleDTO().convertFrom(post);
-
-        // Set summary
-        if (StringUtils.isBlank(basePostSimpleDTO.getSummary())) {
-            basePostSimpleDTO.setSummary(generateSummary(post.getFormatContent()));
-        }
-
-        return basePostSimpleDTO;
-    }
-
-    @Override
-    public List<BasePostSimpleDTO> convertToSimple(List<POST> posts) {
-        if (CollectionUtils.isEmpty(posts)) {
-            return Collections.emptyList();
-        }
-
-        return posts.stream()
-                .map(this::convertToSimple)
-                .collect(Collectors.toList());
-    }
-
-    @Override
-    public Page<BasePostSimpleDTO> convertToSimple(Page<POST> postPage) {
-        Assert.notNull(postPage, "Post page must not be null");
-
-        return postPage.map(this::convertToSimple);
-    }
-
-    @Override
-    public BasePostDetailDTO convertToDetail(POST post) {
-        Assert.notNull(post, "Post must not be null");
-
-        return new BasePostDetailDTO().convertFrom(post);
-    }
-
-    @Override
-    @Transactional
-    public POST updateDraftContent(String content, Integer postId) {
+    @Transactional(rollbackFor = Exception.class)
+    public POST updateDraftContent(String content, String originalContent, Integer postId) {
         Assert.isTrue(!ServiceUtils.isEmptyId(postId), "Post id must not be empty");
 
-        if (content == null) {
-            content = "";
+        if (originalContent == null) {
+            originalContent = "";
         }
+
+        contentService.createOrUpdateDraftBy(postId, content, originalContent);
 
         POST post = getById(postId);
-
-        if (!StringUtils.equals(content, post.getOriginalContent())) {
-            // If content is different with database, then update database
-            int updatedRows = basePostRepository.updateOriginalContent(content, postId);
-            if (updatedRows != 1) {
-                throw new ServiceException("Failed to update original content of post with id " + postId);
-            }
-            // Set the content
-            post.setOriginalContent(content);
-        }
+        post.setContent(getLatestContentById(postId));
 
         return post;
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public POST updateStatus(PostStatus status, Integer postId) {
         Assert.notNull(status, "Post status must not be null");
         Assert.isTrue(!ServiceUtils.isEmptyId(postId), "Post id must not be empty");
@@ -406,7 +357,8 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
             // Update post
             int updatedRows = basePostRepository.updateStatus(status, postId);
             if (updatedRows != 1) {
-                throw new ServiceException("Failed to update post status of post with id " + postId);
+                throw new ServiceException(
+                    "Failed to update post status of post with id " + postId);
             }
 
             post.setStatus(status);
@@ -415,21 +367,15 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
         // Sync content
         if (PostStatus.PUBLISHED.equals(status)) {
             // If publish this post, then convert the formatted content
-            String formatContent = MarkdownUtils.renderHtml(post.getOriginalContent());
-            int updatedRows = basePostRepository.updateFormatContent(formatContent, postId);
-
-            if (updatedRows != 1) {
-                throw new ServiceException("Failed to update post format content of post with id " + postId);
-            }
-
-            post.setFormatContent(formatContent);
+            Content postContent = contentService.publishContent(postId);
+            post.setContent(PatchedContent.of(postContent));
         }
 
         return post;
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public List<POST> updateStatusByIds(List<Integer> ids, PostStatus status) {
         if (CollectionUtils.isEmpty(ids)) {
             return Collections.emptyList();
@@ -440,28 +386,10 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
     }
 
     @Override
-    public List<BasePostDetailDTO> replaceUrl(String oldUrl, String newUrl) {
-        List<POST> posts = listAll();
-        List<POST> replaced = new ArrayList<>();
-        posts.forEach(post -> {
-            if (StringUtils.isNotEmpty(post.getThumbnail())) {
-                post.setThumbnail(post.getThumbnail().replaceAll(oldUrl, newUrl));
-            }
-            if (StringUtils.isNotEmpty(post.getOriginalContent())) {
-                post.setOriginalContent(post.getOriginalContent().replaceAll(oldUrl, newUrl));
-            }
-            if (StringUtils.isNotEmpty(post.getFormatContent())) {
-                post.setFormatContent(post.getFormatContent().replaceAll(oldUrl, newUrl));
-            }
-            replaced.add(post);
-        });
-        List<POST> updated = updateInBatch(replaced);
-        return updated.stream().map(this::convertToDetail).collect(Collectors.toList());
-    }
-
-    @Override
-    public String generateDescription(String content) {
-        Assert.notNull(content, "html content must not be null");
+    public String generateDescription(@Nullable String content) {
+        if (StringUtils.isBlank(content)) {
+            return StringUtils.EMPTY;
+        }
 
         String text = HaloUtils.cleanHtmlTag(content);
 
@@ -469,12 +397,14 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
         text = matcher.replaceAll("");
 
         // Get summary length
-        Integer summaryLength = optionService.getByPropertyOrDefault(PostProperties.SUMMARY_LENGTH, Integer.class, 150);
+        Integer summaryLength =
+            optionService.getByPropertyOrDefault(PostProperties.SUMMARY_LENGTH, Integer.class, 150);
 
         return StringUtils.substring(text, 0, summaryLength);
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public POST create(POST post) {
         // Check title
         slugMustNotExist(post);
@@ -483,11 +413,18 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public POST update(POST post) {
         // Check title
         slugMustNotExist(post);
 
         return super.update(post);
+    }
+
+    @Override
+    public Content getContentById(Integer postId) {
+        Assert.notNull(postId, "The postId must not be null.");
+        return contentService.getById(postId);
     }
 
     /**
@@ -515,8 +452,10 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
     }
 
     @NonNull
-    protected String generateSummary(@NonNull String htmlContent) {
-        Assert.notNull(htmlContent, "html content must not be null");
+    protected String generateSummary(@Nullable String htmlContent) {
+        if (StringUtils.isBlank(htmlContent)) {
+            return StringUtils.EMPTY;
+        }
 
         String text = HaloUtils.cleanHtmlTag(htmlContent);
 
@@ -524,8 +463,83 @@ public abstract class BasePostServiceImpl<POST extends BasePost> extends Abstrac
         text = matcher.replaceAll("");
 
         // Get summary length
-        Integer summaryLength = optionService.getByPropertyOrDefault(PostProperties.SUMMARY_LENGTH, Integer.class, 150);
+        Integer summaryLength =
+            optionService.getByPropertyOrDefault(PostProperties.SUMMARY_LENGTH, Integer.class, 150);
 
         return StringUtils.substring(text, 0, summaryLength);
+    }
+
+    protected <T extends BasePostSimpleDTO> void generateAndSetSummaryIfAbsent(POST post,
+        T postVo) {
+        Assert.notNull(post, "The post must not be null.");
+        if (StringUtils.isNotBlank(postVo.getSummary())) {
+            return;
+        }
+
+        PatchedContent patchedContent = post.getContentOfNullable();
+        if (patchedContent == null) {
+            Content postContent = getContentById(post.getId());
+            postVo.setSummary(generateSummary(postContent.getContent()));
+        } else {
+            postVo.setSummary(generateSummary(patchedContent.getContent()));
+        }
+    }
+
+    // CS304 issue link : https://github.com/halo-dev/halo/issues/1759
+
+    /**
+     * @param htmlContent the markdown style content
+     * @return word count except space and line separator
+     */
+
+    public static long htmlFormatWordCount(String htmlContent) {
+        if (htmlContent == null) {
+            return 0;
+        }
+
+        String cleanContent = HaloUtils.cleanHtmlTag(htmlContent);
+
+        String tempString = cleanContent.replaceAll(CHINESE_REGEX, "");
+
+        String otherString = cleanContent.replaceAll(CHINESE_REGEX, " ");
+
+        int chineseWordCount = cleanContent.length() - tempString.length();
+
+        String[] otherWords = otherString.split(PUNCTUATION_REGEX);
+
+        int otherWordLength = otherWords.length;
+
+        if (otherWordLength > 0 && otherWords[0].length() == 0) {
+            otherWordLength--;
+        }
+
+        if (otherWords.length > 1 && otherWords[otherWords.length - 1].length() == 0) {
+            otherWordLength--;
+        }
+
+        return chineseWordCount + otherWordLength;
+    }
+
+    /**
+     * @param htmlContent the markdown style content
+     * @return character count except space and line separator
+     */
+
+    public static long htmlFormatCharacterCount(String htmlContent) {
+        if (htmlContent == null) {
+            return 0;
+        }
+
+        String cleanContent = HaloUtils.cleanHtmlTag(htmlContent);
+
+        Matcher matcher = BLANK_PATTERN.matcher(cleanContent);
+
+        int count = 0;
+
+        while (matcher.find()) {
+            count++;
+        }
+
+        return cleanContent.length() - count;
     }
 }

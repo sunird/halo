@@ -1,15 +1,29 @@
 package run.halo.app.model.entity;
 
+import java.util.Date;
+import javax.persistence.Column;
+import javax.persistence.DiscriminatorColumn;
+import javax.persistence.DiscriminatorType;
+import javax.persistence.Entity;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+import javax.persistence.Index;
+import javax.persistence.Lob;
+import javax.persistence.Table;
+import javax.persistence.Temporal;
+import javax.persistence.TemporalType;
+import javax.persistence.Transient;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.GenericGenerator;
+import org.springframework.lang.NonNull;
+import org.springframework.lang.Nullable;
+import run.halo.app.model.entity.Content.PatchedContent;
 import run.halo.app.model.enums.PostEditorType;
 import run.halo.app.model.enums.PostStatus;
-
-import javax.persistence.*;
-import java.util.Date;
 
 /**
  * Post base entity.
@@ -21,16 +35,18 @@ import java.util.Date;
 @Data
 @Entity(name = "BasePost")
 @Table(name = "posts", indexes = {
-        @Index(name = "posts_type_status", columnList = "type, status"),
-        @Index(name = "posts_create_time", columnList = "create_time")})
-@DiscriminatorColumn(name = "type", discriminatorType = DiscriminatorType.INTEGER, columnDefinition = "int default 0")
+    @Index(name = "posts_type_status", columnList = "type, status"),
+    @Index(name = "posts_create_time", columnList = "create_time")})
+@DiscriminatorColumn(name = "type", discriminatorType = DiscriminatorType.INTEGER,
+    columnDefinition = "int default 0")
 @ToString(callSuper = true)
 @EqualsAndHashCode(callSuper = true)
 public class BasePost extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY, generator = "custom-id")
-    @GenericGenerator(name = "custom-id", strategy = "run.halo.app.model.entity.support.CustomIdGenerator")
+    @GenericGenerator(name = "custom-id", strategy = "run.halo.app.model.entity.support"
+        + ".CustomIdGenerator")
     private Integer id;
 
     /**
@@ -69,7 +85,7 @@ public class BasePost extends BaseEntity {
     /**
      * Original content,not format.
      */
-    @Column(name = "original_content", nullable = false)
+    @Column(name = "original_content")
     @Lob
     private String originalContent;
 
@@ -127,7 +143,7 @@ public class BasePost extends BaseEntity {
     private Integer topPriority;
 
     /**
-     * Likes
+     * Likes.
      */
     @Column(name = "likes")
     @ColumnDefault("0")
@@ -153,11 +169,25 @@ public class BasePost extends BaseEntity {
     private String metaDescription;
 
     /**
-     * Content word count
+     * Content word count.
      */
     @Column(name = "word_count")
     @ColumnDefault("0")
     private Long wordCount;
+
+    /**
+     * Post content version.
+     */
+    @ColumnDefault("1")
+    private Integer version;
+
+    /**
+     * This extra field don't correspond to any columns in the <code>Post</code> table because we
+     * don't want to save this value.
+     */
+    @Transient
+    private PatchedContent content;
+
 
     @Override
     public void prePersist() {
@@ -203,14 +233,6 @@ public class BasePost extends BaseEntity {
             likes = 0L;
         }
 
-        if (originalContent == null) {
-            originalContent = "";
-        }
-
-        if (formatContent == null) {
-            formatContent = "";
-        }
-
         if (editorType == null) {
             editorType = PostEditorType.MARKDOWN;
         }
@@ -218,6 +240,42 @@ public class BasePost extends BaseEntity {
         if (wordCount == null || wordCount < 0) {
             wordCount = 0L;
         }
+
+        if (version == null || version < 0) {
+            version = 1;
+        }
+
+        // Clear the value of the deprecated attributes
+        this.originalContent = "";
+        this.formatContent = "";
     }
 
+    @Override
+    protected void preUpdate() {
+        super.preUpdate();
+        // Clear the value of the deprecated attributes
+        this.originalContent = "";
+        this.formatContent = "";
+    }
+
+    /**
+     * Gets post content.
+     *
+     * @return a {@link PatchedContent} if present,otherwise an empty object
+     */
+    @NonNull
+    public PatchedContent getContent() {
+        if (this.content == null) {
+            PatchedContent patchedContent = new PatchedContent();
+            patchedContent.setOriginalContent("");
+            patchedContent.setContent("");
+            return patchedContent;
+        }
+        return content;
+    }
+
+    @Nullable
+    public PatchedContent getContentOfNullable() {
+        return this.content;
+    }
 }

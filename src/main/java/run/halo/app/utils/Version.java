@@ -1,18 +1,18 @@
 package run.halo.app.utils;
 
+import java.util.Comparator;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.jetbrains.annotations.NotNull;
 import org.springframework.lang.NonNull;
 import org.springframework.lang.Nullable;
 import run.halo.app.model.support.HaloConst;
-
-import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Version domain.
@@ -23,19 +23,19 @@ import java.util.regex.Pattern;
 @ToString
 @EqualsAndHashCode
 @Slf4j
-public class Version implements Comparable<Version> {
+public class Version {
 
     /**
      * Regex expression.
      */
-    private static final String REGEX = "^" +
-            "(?<major>0|[1-9]\\d*)\\." + // major number
-            "(?<minor>0|[1-9]\\d*)\\." + // minor number
-            "(?<patch>0|[1-9]\\d*)" + // patch number
-            "(?:-" + // pre-release start
-            "(?<preRelease>beta|alpha|rc)\\." + // pre-release type
-            "(?<preReleaseMajor>0|[1-9]\\d*)" + // pre-release major number
-            ")?$"; // pre-release end
+    private static final String REGEX = "^"
+        + "(?<major>0|[1-9]\\d*)\\."  // major number
+        + "(?<minor>0|[1-9]\\d*)\\."  // minor number
+        + "(?<patch>0|[1-9]\\d*)"  // patch number
+        + "(?:-"  // pre-release start
+        + "(?<preRelease>beta|alpha|rc)\\."  // pre-release type
+        + "(?<preReleaseMajor>0|[1-9]\\d*)"  // pre-release major number
+        + ")?$"; // pre-release end
 
     /**
      * Pattern.
@@ -50,7 +50,8 @@ public class Version implements Comparable<Version> {
     /**
      * Maximum version.
      */
-    private static final Version MAXIMUM_VERSION = new Version(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
+    private static final Version MAXIMUM_VERSION =
+        new Version(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
 
     /**
      * Major number.
@@ -85,7 +86,8 @@ public class Version implements Comparable<Version> {
         this(major, minor, patch, null, null);
     }
 
-    public Version(long major, long minor, long patch, @Nullable PreRelease preRelease, @Nullable Long preReleaseMajor) {
+    public Version(long major, long minor, long patch, @Nullable PreRelease preRelease,
+        @Nullable Long preReleaseMajor) {
         if (major < 0) {
             major = 0L;
         }
@@ -150,31 +152,65 @@ public class Version implements Comparable<Version> {
         String preReleaseMajor = matcher.group("preReleaseMajor");
         // build full version
         return Optional.of(new Version(Long.parseLong(major),
-                Long.parseLong(minor),
-                Long.parseLong(patch),
-                PreRelease.of(preRelease),
-                StringUtils.isNotBlank(preReleaseMajor) ? Long.parseLong(preReleaseMajor) : null));
+            Long.parseLong(minor),
+            Long.parseLong(patch),
+            PreRelease.of(preRelease),
+            StringUtils.isNotBlank(preReleaseMajor) ? Long.parseLong(preReleaseMajor) : null));
     }
 
-    @Override
-    public int compareTo(@NotNull Version anotherVersion) {
+    /**
+     * Check if the current version is compatible with the target version.
+     *
+     * @param target target version must not be blank.
+     * @return true if the current version is compatible with the target version; false otherwise.
+     */
+    public boolean compatible(String target) {
+        Version targetVersion = resolve(target).orElse(emptyVersion());
         // compare major
-        int majorCompare = Long.compare(major, anotherVersion.major);
+        int majorCompare = Long.compare(major, targetVersion.major);
         if (majorCompare != 0) {
-            return majorCompare;
+            return majorCompare > 0;
         }
         // compare minor
-        int minorCompare = Long.compare(minor, anotherVersion.minor);
+        int minorCompare = Long.compare(minor, targetVersion.minor);
         if (minorCompare != 0) {
-            return minorCompare;
+            return minorCompare > 0;
         }
         // compare patch
-        int patchCompare = Long.compare(patch, anotherVersion.patch);
+        int patchCompare = Long.compare(patch, targetVersion.patch);
         if (patchCompare != 0) {
-            return patchCompare;
+            return patchCompare > 0;
         }
-        // if all the major, minor and patch are the same, then compare pre release number
-        return Long.compare(preReleaseMajor, anotherVersion.preReleaseMajor);
+
+        // here means that all major, minor and patch number are the same.
+        if (!this.isPreRelease() || !targetVersion.isPreRelease()) {
+            return true;
+        }
+        // compare pre-release tag
+        int preReleaseTagCompare =
+            PreRelease.ALPHA.compare(
+                Objects.requireNonNull(this.preRelease),
+                Objects.requireNonNull(targetVersion.preRelease));
+        if (preReleaseTagCompare != 0) {
+            return preReleaseTagCompare > 0;
+        }
+
+        // compare pre-release number
+        long preReleaseNumberCompare = this.preReleaseMajor - targetVersion.preReleaseMajor;
+        if (preReleaseNumberCompare != 0) {
+            return preReleaseNumberCompare > 0;
+        }
+        return true;
+    }
+
+
+    /**
+     * Check if current version is a pre-release version.
+     *
+     * @return true if current version is a pre-release version; false otherwise.
+     */
+    public boolean isPreRelease() {
+        return preRelease != null;
     }
 
     /**
@@ -182,22 +218,32 @@ public class Version implements Comparable<Version> {
      *
      * @author johnniang
      */
-    public enum PreRelease {
-
-        /**
-         * Beta.
-         */
-        BETA,
+    public enum PreRelease implements Comparator<PreRelease> {
 
         /**
          * Alpha.
          */
-        ALPHA,
+        ALPHA(1),
+
+        /**
+         * Beta.
+         */
+        BETA(2),
 
         /**
          * Release candidate.
          */
-        RC;
+        RC(3);
+
+        /**
+         * Lower priority means the pre-release is earlier than others.
+         * Compare order: ALPHA < BETA < RC
+         */
+        private final int priority;
+
+        PreRelease(int priority) {
+            this.priority = priority;
+        }
 
         @Nullable
         static PreRelease of(@Nullable String preReleaseStr) {
@@ -208,6 +254,11 @@ public class Version implements Comparable<Version> {
                 }
             }
             return null;
+        }
+
+        @Override
+        public int compare(PreRelease left, PreRelease right) {
+            return left.priority - right.priority;
         }
     }
 }

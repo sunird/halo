@@ -1,5 +1,9 @@
 package run.halo.app.service;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -13,16 +17,12 @@ import run.halo.app.model.entity.PostCategory;
 import run.halo.app.model.enums.PostStatus;
 import run.halo.app.service.base.CrudService;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 /**
  * Post category service interface.
  *
  * @author johnniang
  * @author ryanwang
+ * @author guqing
  * @date 2019-03-19
  */
 public interface PostCategoryService extends CrudService<PostCategory, Integer> {
@@ -58,11 +58,31 @@ public interface PostCategoryService extends CrudService<PostCategory, Integer> 
      * Lists post by category id and post status.
      *
      * @param categoryId category id must not be null
-     * @param status     post status
+     * @param status post status
      * @return a list of post
      */
     @NonNull
     List<Post> listPostBy(@NonNull Integer categoryId, @NonNull PostStatus status);
+
+    /**
+     * Lists post by category id and post status.
+     *
+     * @param categoryId category id must not be null
+     * @param status     post status
+     * @return a list of post
+     */
+    @NonNull
+    List<Post> listPostBy(@NonNull Integer categoryId, @NonNull Set<PostStatus> status);
+
+    /**
+     * Lists post by category slug and post status.
+     *
+     * @param slug category slug must not be null
+     * @param status post status
+     * @return a list of post
+     */
+    @NonNull
+    List<Post> listPostBy(@NonNull String slug, @NonNull PostStatus status);
 
     /**
      * Lists post by category slug and post status.
@@ -72,17 +92,29 @@ public interface PostCategoryService extends CrudService<PostCategory, Integer> 
      * @return a list of post
      */
     @NonNull
-    List<Post> listPostBy(@NonNull String slug, @NonNull PostStatus status);
+    List<Post> listPostBy(@NonNull String slug, @NonNull Set<PostStatus> status);
 
     /**
      * Pages post by category id.
      *
      * @param categoryId category id must not be null
-     * @param pageable   pageable
+     * @param pageable pageable
      * @return page of post
      */
     @NonNull
     Page<Post> pagePostBy(@NonNull Integer categoryId, Pageable pageable);
+
+    /**
+     * Pages post by category id and post status.
+     *
+     * @param categoryId category id must not be null
+     * @param status post status
+     * @param pageable pageable
+     * @return page of post
+     */
+    @NonNull
+    Page<Post> pagePostBy(@NonNull Integer categoryId, @NonNull PostStatus status,
+        Pageable pageable);
 
     /**
      * Pages post by category id and post status.
@@ -93,17 +125,19 @@ public interface PostCategoryService extends CrudService<PostCategory, Integer> 
      * @return page of post
      */
     @NonNull
-    Page<Post> pagePostBy(@NonNull Integer categoryId, @NonNull PostStatus status, Pageable pageable);
+    Page<Post> pagePostBy(
+        @NonNull Integer categoryId, @NonNull Set<PostStatus> status, Pageable pageable);
 
     /**
      * Merges or creates post categories by post id and category id set if absent.
      *
-     * @param postId      post id must not be null
+     * @param postId post id must not be null
      * @param categoryIds category id set
      * @return a list of post category
      */
     @NonNull
-    List<PostCategory> mergeOrCreateByIfAbsent(@NonNull Integer postId, @Nullable Set<Integer> categoryIds);
+    List<PostCategory> mergeOrCreateByIfAbsent(@NonNull Integer postId,
+        @Nullable Set<Integer> categoryIds);
 
     /**
      * Lists by post id.
@@ -160,4 +194,13 @@ public interface PostCategoryService extends CrudService<PostCategory, Integer> 
      */
     @NonNull
     List<CategoryWithPostCountDTO> listCategoryWithPostCountDto(@NonNull Sort sort);
+
+    /**
+     * Lists by category id.
+     *
+     * @param categoryIdList category id must not be empty
+     * @return a list of post category
+     */
+    @NonNull
+    List<PostCategory> listByCategoryIdList(@NonNull List<Integer> categoryIdList);
 }

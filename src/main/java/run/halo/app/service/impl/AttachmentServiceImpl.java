@@ -1,5 +1,13 @@
 package run.halo.app.service.impl;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
+import javax.persistence.criteria.Predicate;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.domain.Page;
@@ -11,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.util.UriUtils;
 import run.halo.app.exception.AlreadyExistsException;
 import run.halo.app.handler.file.FileHandlers;
 import run.halo.app.model.dto.AttachmentDTO;
@@ -23,11 +32,8 @@ import run.halo.app.repository.AttachmentRepository;
 import run.halo.app.service.AttachmentService;
 import run.halo.app.service.OptionService;
 import run.halo.app.service.base.AbstractCrudService;
+import run.halo.app.utils.FilenameUtils;
 import run.halo.app.utils.HaloUtils;
-
-import javax.persistence.criteria.Predicate;
-import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * AttachmentService implementation
@@ -38,7 +44,8 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
-public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integer> implements AttachmentService {
+public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integer>
+    implements AttachmentService {
 
     private final AttachmentRepository attachmentRepository;
 
@@ -47,8 +54,8 @@ public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integ
     private final FileHandlers fileHandlers;
 
     public AttachmentServiceImpl(AttachmentRepository attachmentRepository,
-            OptionService optionService,
-            FileHandlers fileHandlers) {
+        OptionService optionService,
+        FileHandlers fileHandlers) {
         super(attachmentRepository);
         this.attachmentRepository = attachmentRepository;
         this.optionService = optionService;
@@ -56,11 +63,13 @@ public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integ
     }
 
     @Override
-    public Page<AttachmentDTO> pageDtosBy(@NonNull Pageable pageable, AttachmentQuery attachmentQuery) {
+    public Page<AttachmentDTO> pageDtosBy(@NonNull Pageable pageable,
+        AttachmentQuery attachmentQuery) {
         Assert.notNull(pageable, "Page info must not be null");
 
         // List all
-        Page<Attachment> attachmentPage = attachmentRepository.findAll(buildSpecByQuery(attachmentQuery), pageable);
+        Page<Attachment> attachmentPage =
+            attachmentRepository.findAll(buildSpecByQuery(attachmentQuery), pageable);
 
         // Convert and return
         return attachmentPage.map(this::convertToDto);
@@ -70,20 +79,23 @@ public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integ
     private Specification<Attachment> buildSpecByQuery(@NonNull AttachmentQuery attachmentQuery) {
         Assert.notNull(attachmentQuery, "Attachment query must not be null");
 
-        return (Specification<Attachment>) (root, query, criteriaBuilder) -> {
+        return (root, query, criteriaBuilder) -> {
             List<Predicate> predicates = new LinkedList<>();
 
             if (attachmentQuery.getMediaType() != null) {
-                predicates.add(criteriaBuilder.equal(root.get("mediaType"), attachmentQuery.getMediaType()));
+                predicates.add(
+                    criteriaBuilder.equal(root.get("mediaType"), attachmentQuery.getMediaType()));
             }
 
             if (attachmentQuery.getAttachmentType() != null) {
-                predicates.add(criteriaBuilder.equal(root.get("type"), attachmentQuery.getAttachmentType()));
+                predicates.add(
+                    criteriaBuilder.equal(root.get("type"), attachmentQuery.getAttachmentType()));
             }
 
             if (attachmentQuery.getKeyword() != null) {
 
-                String likeCondition = String.format("%%%s%%", StringUtils.strip(attachmentQuery.getKeyword()));
+                String likeCondition =
+                    String.format("%%%s%%", StringUtils.strip(attachmentQuery.getKeyword()));
 
                 Predicate nameLike = criteriaBuilder.like(root.get("name"), likeCondition);
 
@@ -100,7 +112,8 @@ public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integ
 
         AttachmentType attachmentType = getAttachmentType();
 
-        log.debug("Starting uploading... type: [{}], file: [{}]", attachmentType, file.getOriginalFilename());
+        log.debug("Starting uploading... type: [{}], file: [{}]", attachmentType,
+            file.getOriginalFilename());
 
         // Upload file
         UploadResult uploadResult = fileHandlers.upload(file, attachmentType);
@@ -114,7 +127,8 @@ public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integ
         // Convert separator
         attachment.setPath(HaloUtils.changeFileSeparatorToUrlSeparator(uploadResult.getFilePath()));
         attachment.setFileKey(uploadResult.getKey());
-        attachment.setThumbPath(uploadResult.getThumbPath());
+        attachment.setThumbPath(
+            HaloUtils.changeFileSeparatorToUrlSeparator(uploadResult.getThumbPath()));
         attachment.setMediaType(uploadResult.getMediaType().toString());
         attachment.setSuffix(uploadResult.getSuffix());
         attachment.setWidth(uploadResult.getWidth());
@@ -163,9 +177,26 @@ public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integ
         AttachmentDTO attachmentDTO = new AttachmentDTO().convertFrom(attachment);
 
         if (Objects.equals(attachmentDTO.getType(), AttachmentType.LOCAL)) {
+
+            // 将 local 存储的链接中的文件名替换为编码后的文件名
+            String path = attachmentDTO.getPath()
+                .replace(attachmentDTO.getName(), encodeValue(attachmentDTO.getName()));
+
+            String basename = FilenameUtils.getBasename(attachmentDTO.getName());
+            String extension = FilenameUtils.getExtension(attachmentDTO.getName());
+            // 得到 thumbnail name
+            String thumbnailName = String.format("%s-thumbnail%s", basename, extension);
+            String thumbnailPath = attachmentDTO.getThumbPath()
+                .replace(thumbnailName, encodeValue(thumbnailName));
+
             // Append blog base url to path and thumbnail
-            String fullPath = StringUtils.join(enabledAbsolutePath ? blogBaseUrl : "", "/", attachmentDTO.getPath());
-            String fullThumbPath = StringUtils.join(enabledAbsolutePath ? blogBaseUrl : "", "/", attachmentDTO.getThumbPath());
+            String fullPath = StringUtils
+                .join(enabledAbsolutePath ? blogBaseUrl : "", "/", path);
+            String fullThumbPath = StringUtils
+                .join(enabledAbsolutePath ? blogBaseUrl : "", "/", thumbnailPath);
+
+            // 对于之前上传的链接，需要将文件名替换为编码后的文件名
+            fullThumbPath = HaloUtils.changeFileSeparatorToUrlSeparator(fullThumbPath);
 
             // Set full path and full thumb path
             attachmentDTO.setPath(fullPath);
@@ -175,6 +206,11 @@ public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integ
         return attachmentDTO;
     }
 
+    private String encodeValue(String value) {
+        return UriUtils.encode(value, StandardCharsets.UTF_8);
+    }
+
+
     @Override
     public List<String> listAllMediaType() {
         return attachmentRepository.findAllMediaType();
@@ -183,22 +219,6 @@ public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integ
     @Override
     public List<AttachmentType> listAllType() {
         return attachmentRepository.findAllType();
-    }
-
-    @Override
-    public List<Attachment> replaceUrl(String oldUrl, String newUrl) {
-        List<Attachment> attachments = listAll();
-        List<Attachment> replaced = new ArrayList<>();
-        attachments.forEach(attachment -> {
-            if (StringUtils.isNotEmpty(attachment.getPath())) {
-                attachment.setPath(attachment.getPath().replaceAll(oldUrl, newUrl));
-            }
-            if (StringUtils.isNotEmpty(attachment.getThumbPath())) {
-                attachment.setThumbPath(attachment.getThumbPath().replaceAll(oldUrl, newUrl));
-            }
-            replaced.add(attachment);
-        });
-        return updateInBatch(replaced);
     }
 
     @Override
@@ -233,6 +253,8 @@ public class AttachmentServiceImpl extends AbstractCrudService<Attachment, Integ
      */
     @NonNull
     private AttachmentType getAttachmentType() {
-        return Objects.requireNonNull(optionService.getEnumByPropertyOrDefault(AttachmentProperties.ATTACHMENT_TYPE, AttachmentType.class, AttachmentType.LOCAL));
+        return Objects.requireNonNull(optionService
+            .getEnumByPropertyOrDefault(AttachmentProperties.ATTACHMENT_TYPE, AttachmentType.class,
+                AttachmentType.LOCAL));
     }
 }

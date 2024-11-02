@@ -1,6 +1,7 @@
 package run.halo.app.controller.admin.api;
 
 import io.swagger.annotations.ApiOperation;
+import javax.validation.Valid;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -9,8 +10,6 @@ import run.halo.app.annotation.DisableOnCondition;
 import run.halo.app.mail.MailService;
 import run.halo.app.model.params.MailParam;
 import run.halo.app.model.support.BaseResponse;
-
-import javax.validation.Valid;
 
 /**
  * Mail controller.
@@ -32,6 +31,7 @@ public class MailController {
     @ApiOperation("Tests the SMTP service")
     @DisableOnCondition
     public BaseResponse<String> testMail(@Valid @RequestBody MailParam mailParam) {
+        mailService.testConnection();
         mailService.sendTextMail(mailParam.getTo(), mailParam.getSubject(), mailParam.getContent());
         return BaseResponse.ok("已发送，请查收。若确认没有收到邮件，请检查服务器日志");
     }

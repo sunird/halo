@@ -1,13 +1,12 @@
 package run.halo.app.model.params;
 
+import javax.validation.constraints.Min;
+import javax.validation.constraints.NotBlank;
+import javax.validation.constraints.Size;
 import lombok.Data;
 import org.hibernate.validator.constraints.URL;
 import run.halo.app.model.dto.base.InputConverter;
 import run.halo.app.model.entity.Link;
-
-import javax.validation.constraints.Min;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.Size;
 
 /**
  * Link param.
@@ -17,6 +16,8 @@ import javax.validation.constraints.Size;
  */
 @Data
 public class LinkParam implements InputConverter<Link> {
+
+    private Integer id;
 
     @NotBlank(message = "友情链接名称不能为空")
     @Size(max = 255, message = "友情链接名称的字符长度不能超过 {max}")

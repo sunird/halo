@@ -3,10 +3,10 @@ package run.halo.app.service;
 import org.springframework.lang.NonNull;
 import run.halo.app.model.dto.EnvironmentDTO;
 import run.halo.app.model.dto.LoginPreCheckDTO;
-import run.halo.app.model.dto.StatisticDTO;
 import run.halo.app.model.entity.User;
 import run.halo.app.model.params.LoginParam;
 import run.halo.app.model.params.ResetPasswordParam;
+import run.halo.app.model.params.ResetPasswordSendCodeParam;
 import run.halo.app.security.token.AuthToken;
 
 /**
@@ -55,7 +55,7 @@ public interface AdminService {
      *
      * @param param param must not be null
      */
-    void sendResetPasswordCode(@NonNull ResetPasswordParam param);
+    void sendResetPasswordCode(@NonNull ResetPasswordSendCodeParam param);
 
     /**
      * Reset password by code.
@@ -63,15 +63,6 @@ public interface AdminService {
      * @param param param must not be null
      */
     void resetPasswordByCode(@NonNull ResetPasswordParam param);
-
-    /**
-     * Get system counts.
-     *
-     * @return count dto
-     */
-    @NonNull
-    @Deprecated
-    StatisticDTO getCount();
 
     /**
      * Get system environments
@@ -89,11 +80,6 @@ public interface AdminService {
      */
     @NonNull
     AuthToken refreshToken(@NonNull String refreshToken);
-
-    /**
-     * Updates halo admin assets.
-     */
-    void updateAdminAssets();
 
     /**
      * Get halo logs content.

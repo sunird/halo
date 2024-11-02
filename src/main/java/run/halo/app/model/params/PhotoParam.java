@@ -1,11 +1,10 @@
 package run.halo.app.model.params;
 
+import java.util.Date;
+import javax.validation.constraints.NotBlank;
 import lombok.Data;
 import run.halo.app.model.dto.base.InputConverter;
 import run.halo.app.model.entity.Photo;
-
-import javax.validation.constraints.NotBlank;
-import java.util.Date;
 
 /**
  * Post param.
@@ -15,6 +14,8 @@ import java.util.Date;
  */
 @Data
 public class PhotoParam implements InputConverter<Photo> {
+
+    private Integer id;
 
     @NotBlank(message = "照片名称不能为空")
     private String name;
